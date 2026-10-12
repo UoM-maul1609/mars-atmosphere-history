@@ -1,4 +1,3 @@
-import sys
 import numpy as np
 import copy
 from scipy.integrate import solve_ivp
@@ -30,14 +29,11 @@ def test(y,t,omega):
 # if __name__ == "__main__":
 def run_model(runNo, obliquity_flag, sputtering_flag=True, pce_flag=True,\
         X_gas=0.01,f_comet=0.001, C_vol=5.0, crater_model=1,C_Ne_IDP = 10.,\
-	dynamo_time = 4.1):
+	dynamo_time = 4.1, output_file=None):
     """
         initial conditions++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
     """
     
-    if(len(sys.argv)>1):
-    	file1=sys.argv[1]
-    	
     Patm = 1.5 # initial pressure in most calculations - section 2.9, pp449
     tinit=-4.5e9 
     Rmars=3389.5e3 # m
@@ -142,6 +138,15 @@ def run_model(runNo, obliquity_flag, sputtering_flag=True, pce_flag=True,\
     # call function to set isotopes and adjust atmosphere to same pressure
     (mole1,mole_elements)=isotopic_data.set_amount_of_element(Matm/MolW_atm[0])
     Natm = np.concatenate([mole1,[0]]) # number of moles of co2, n2, h2o
+    # Keep the prescribed initial pressure exact (the helper normalises by
+    # number of molecules, rather than mass, so does not quite preserve it).
+    initial_scale = Matm / np.dot(Natm, MolW_atm)
+    Natm *= initial_scale
+    mole_elements *= initial_scale
+    # The helper returns approximate reference-isotope counts for C and N;
+    # the dynamical elemental inventories must use total elemental counts.
+    mole_elements[0] = Natm[0]
+    mole_elements[1] = 2.0 * Natm[1]
     Matm = Natm *MolW_atm  # mass of co2, n2, h2o
 #     Natm = Matm / MolW_atm     # number of moles of co2, n2, h2o
     ph2o = svp_ice.svp_ice01(tmars)
@@ -364,7 +369,7 @@ def run_model(runNo, obliquity_flag, sputtering_flag=True, pce_flag=True,\
         # carbon - rate of escape
         if ((-t[i]/1e9< dynamo_time ) and pce_flag):
                 Fcph = photo_chemical.carbon_escape((t[i]-tinit)/1e9,\
-                    (t[i+1]-tinit)/1e9,(-tinit)/1e9) / 6.02e23
+                    (t[i+1]-tinit)/1e9,(-tinit)/1e9)  # C atoms/s
                 # nitrogen - rate of escape
                 (fn2_1,fn2_2,fn2_3)=photo_chemical.nitrogen_escape(\
                     np.maximum(Natm[0],1e-3),Natm[1],np.minimum(euv_flux,6),1.,Amars, Hscale)
@@ -374,7 +379,8 @@ def run_model(runNo, obliquity_flag, sputtering_flag=True, pce_flag=True,\
                 dN2 =[fn2*tstep*86400*365/6.02e23 ,0., 0.,0.,0.]
         else:
                 Fcph=0.
-                dN2[0]=0.
+                # Never reuse the cometary dN2 array as an escape flux.
+                dN2 = [0.] * 5
 
         Natm[0] = Natm[0] - Fcph*tstep*86400*365/6.02e23
         Natm[1] = Natm[1] - dN2[0] # N2
@@ -457,7 +463,10 @@ def run_model(runNo, obliquity_flag, sputtering_flag=True, pce_flag=True,\
             isotopic_data.abundances1['Volcanic degassing'][1][0] * \
             isotopic_data.solar_abundances[2:] / isotopic_data.solar_abundances[0])
             
-        mole_elements[0] = mole_elements[0] + co2*tstep*86400*365/6.02e23
+        # Atmospheric CO2 was already updated with volcanic CO2 before the
+        # collapse adjustment; adding it again here double-counts carbon.
+        # Keep the element inventory synchronized with atmospheric CO2.
+        mole_elements[0] = Natm[0]
         mole_elements[1] = mole_elements[1] + dN[0] # moles of N - i.e the element
         mole_elements[2:] = mole_elements[2:] + np.array(dN[1:])
         # 7. Isotope fractionation. need to add elemnents also
@@ -496,8 +505,8 @@ def run_model(runNo, obliquity_flag, sputtering_flag=True, pce_flag=True,\
         ----------------------------------------------------------------------------------
     """
     
-    if(len(sys.argv)>1):
-    	np.savez(file1,t=t,Patm=ystore[:,0], \
+    if output_file is not None:
+    	np.savez(output_file,t=t,Patm=ystore[:,0], \
     		isoRat=ystore[:,1:6],\
     		element_mass=isotopic_data.element_mass, \
     		abundances_wrt_sol=mole_elements/isotopic_data.solar_abundances, \
@@ -505,7 +514,7 @@ def run_model(runNo, obliquity_flag, sputtering_flag=True, pce_flag=True,\
     			isotopic_data.isotopes[7], \
     				isotopic_data.isotopes[15]], \
     				temp=ystore[:,6] )
-    	print(file1)
+    	print(output_file)
     	
     return t,ystore,mole_elements,isotopes_sim, Amars
     	

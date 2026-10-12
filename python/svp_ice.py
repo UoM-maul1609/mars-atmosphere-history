@@ -20,7 +20,7 @@ if __name__ == "__main__":
     
     plt.ion()
     plt.plot(T-273.15,pH2O)
-    plt.xlabel('T ($^\circ$C)')
+    plt.xlabel(r'T ($^\circ$C)')
     plt.ylabel('Saturation vapour pressure over ice surface (Pa)')
     plt.show()
     

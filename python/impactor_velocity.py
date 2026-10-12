@@ -60,14 +60,24 @@ daty = data[1::2]
 
 daty=np.maximum(daty,0.)
 
-datyy=np.cumsum(daty)
-datyy=datyy/np.max(datyy)
+# The digitised ordinates represent dN/dv, not probability per data point.
+# Integrate over actual velocity spacing to obtain the cumulative distribution.
+from scipy.integrate import cumulative_trapezoid
+_datyy = cumulative_trapezoid(daty, datx, initial=0.0)
+_datyy /= _datyy[-1]
+# The zero-density tail gives repeated CDF values, invalid for interp1d.
+datyy, _unique_indices = np.unique(_datyy, return_index=True)
+_cdf_velocities = datx[_unique_indices]
+# Explicit support at zero probability (first positive-density bin starts later).
+if datyy[0] != 0.0:
+    datyy = np.insert(datyy, 0, 0.0)
+    _cdf_velocities = np.insert(_cdf_velocities, 0, datx[0])
 
 """
     return the velocities
 """
 def inv_cdf1(rand_numbers=np.random.rand((1000000))):
-    inv_cdf=scint.interp1d(datyy,datx,fill_value='extrapolate',kind='linear')
+    inv_cdf=scint.interp1d(datyy,_cdf_velocities,bounds_error=False,fill_value=(_cdf_velocities[0], _cdf_velocities[-1]),kind='linear')
 
     return inv_cdf(rand_numbers)
     
@@ -80,7 +90,7 @@ if __name__ == "__main__":
     """
     import matplotlib.pyplot as plt
 
-    inv_cdf=scint.interp1d(datyy,datx,fill_value='extrapolate',kind='linear')
+    inv_cdf=scint.interp1d(datyy,_cdf_velocities,fill_value='extrapolate',kind='linear')
     
     
     rand_numbers=np.random.rand((1000000))

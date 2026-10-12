@@ -56,7 +56,7 @@ if __name__ == "__main__":
 	c=logy2-m*x2
 	
 	plt.plot(t-273.15,10**(m*(t-273.15)+c),'--b')
-	plt.xlabel('T ($^\circ$C)')
+	plt.xlabel(r'T ($^\circ$C)')
 	plt.ylabel('$P_{CO_2}$ (atm)')
 	plt.yscale('log')
 	plt.ylim((1e-5,1e1))

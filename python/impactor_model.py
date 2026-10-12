@@ -95,7 +95,7 @@ def sample_sizes(rand_numbers=np.random.rand((1000000)),rho_pr=2600):
     for i in range(len(rand_numbers)):
         diams[i] = inv_impactor_csd(rand_numbers[i],nF,300.e3**(-1.5)) 
     diams = np.minimum(diams,2000.e3)
-    mass = np.pi/6*rho_pr*(diams / 1.e3)**3
+    mass = np.pi/6*rho_pr*diams**3  # diameter [m], density [kg/m^3], mass [kg]
     return (diams,mass)
 
 if __name__ == "__main__":
