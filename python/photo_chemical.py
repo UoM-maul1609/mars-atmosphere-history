@@ -51,9 +51,41 @@ def carbon_escape(age_young,age_old,maxage):
         maxage**-0.86
     return Fcph
     
+# The phi curves are normalised to 1 at x = 0.0264, the present-day BULK
+# (homopause) N2/CO2 ratio: Fox & Dalgarno's present-day fluxes already come
+# from a model atmosphere with realistic diffusive separation above the
+# homopause. Multiplying the bulk ratio by R_diff (~17) before the lookup
+# (previous behaviour) counted that enrichment twice: at present-day
+# composition it gave phi1 = 4.4, i.e. 4x Fox & Dalgarno's own present flux.
+# Hu & Thomas (2023, Eq. 15) likewise scale photochemical N escape with the
+# bulk N2 mixing ratio. Set EXOBASE_RATIO_LOOKUP = True to restore the old
+# behaviour for comparison.
+EXOBASE_RATIO_LOOKUP = False
+
+# Fox & Dalgarno (1983) Table 3 escape fluxes (cm^-2 s^-1) by process:
+# phi1 group = photodissociation, photodissociative ionisation, electron
+# impact dissociative ionisation, dissociative recombination of N2+;
+# phi2 = N2+ + O -> NO+ + N; phi3 = N2 + O++ -> N+ + N + O+.
+# Totals: low 2.3e5, high 8.9e5, average 5.6e5. Jakosky et al. (1994) use
+# Fox (1993a)'s average-activity total of 4.8e5, close to 'average'.
+# Default 'low': with it the photochemical N lifetimes reproduce Kurokawa et
+# al. (2018) Fig. 14a (~2 Gyr at 6 mbar today, ~0.55 Gyr at 2 Ga, ~0.15 Gyr at
+# 3.5 Ga) within reading accuracy, whereas 'average' gives lifetimes 2-3x
+# shorter. Fox & Dalgarno (1980) also predicted a present rate of 2.0e5.
+FD83_FLUXES = {
+    'low':     ([5.9e4, 1.7e4, 1.4e4, 8.4e4], 4.7e4, 4.8e3),
+    'average': ([1.0e5, 3.0e4, 3.1e4, 2.9e5], 8.9e4, 9.4e3),
+    'high':    ([1.4e5, 6.0e4, 4.8e4, 5.0e5], 1.3e5, 1.4e4),
+}
+FD83_SOLAR_ACTIVITY = 'low'
+
+
 def nitrogen_escape(N_CO2,N_N2,euv,euv_max,Amars,Hatm):
-    Rdiff=np.exp((amu_co2-amu_n2)*amu*g_mars*deltaz/T/kBoltz)   
-    xval = Rdiff * N_N2 / N_CO2
+    xval = N_N2 / N_CO2
+    if EXOBASE_RATIO_LOOKUP:
+        from MarsSputtering_Calc6_7 import upper_atmosphere
+        z, upper_T = upper_atmosphere(euv)
+        xval = xval * np.exp((amu_co2-amu_n2)*amu*g_mars*z/upper_T/kBoltz)
     phi1_val = phi1(xval)
     phi2_val = phi2(xval)
     phi3_val = phi3(xval)
@@ -61,12 +93,13 @@ def nitrogen_escape(N_CO2,N_N2,euv,euv_max,Amars,Hatm):
     # from table 3, fox and dalgarno we can see the last two rates are for phi2 and phi3
     # whereas the first 4 are proportional to N2 I think?, so add up the first four 
     # and multiply by phi, this is proportional to euv
-    flux1=(1e5+3e4+3.1e4+2.9e5)*phi1_val*euv/euv_max * Amars * 1e4 
+    f1, f2, f3 = FD83_FLUXES[FD83_SOLAR_ACTIVITY]
+    flux1=sum(f1)*phi1_val*euv/euv_max * Amars * 1e4 
     
     # phi2
-    flux2=(8.9e4)*phi2_val*(euv/euv_max)**1.5 * Amars * 1e4 
+    flux2=f2*phi2_val*(euv/euv_max)**1.5 * Amars * 1e4 
     # phi3
-    flux3=(9.4e3)*phi3_val*(euv/euv_max)**1.5 * Amars * 1e4
+    flux3=f3*phi3_val*(euv/euv_max)**1.5 * Amars * 1e4
 
     return (flux1,flux2,flux3)
     

@@ -10,7 +10,7 @@ k_B=1.381e-23 # Boltzmann constant
 R_gas = 8.314 # ideal gas constant
 Navo  = 6.02e23
 
-Y_CO2=0.67 # see page 3 of Luhmann et al.
+Y_CO2=0.7 # Kurokawa Table 1, C (CO2); was 0.67 (Luhmann), inconsistent with Y_i
 
 amu=1.66e-27
 g_mars=3.721
@@ -19,7 +19,7 @@ T=100.
 amu_co2=44
 
 yields = dict()
-yields['C'] = 0.67 # strictly 0.7
+yields['C'] = 0.7 # Kurokawa Table 1
 yields['N'] = 2.4
 yields['Ne'] = 3.
 yields['Ar'] = 1.4
@@ -27,27 +27,43 @@ yields['Kr'] = 1.143
 yields['Xe'] = 0.738
 
 amus = dict()
-amus['C'] = 12
-amus['N'] = 14
+amus['C'] = 44 # sputtered CO2 molecule (Kurokawa Table 1)
+amus['N'] = 28 # sputtered N2 molecule (Kurokawa Table 1)
 amus['Ne'] = 20
 amus['Ar'] = 36
 amus['Kr'] = 84
 amus['Xe'] = 130
 
-def calculate_rdiffs(element_mass,isotope_mass):
+def upper_atmosphere(euv):
+    """Kurokawa et al. (2018), Table 2, log-EUV interpolation.
+
+    Tabulated heights/temperatures are kept separate to preserve the
+    published ratio; endpoint values are held outside the table range.
+    """
+    levels = np.array([1., 3., 6., 100.])
+    heights_km = np.array([80., 125., 175., 600.])
+    temperatures = np.array([200., 300., 500., 1200.])
+    x = np.log(np.clip(euv, levels[0], levels[-1]))
+    z = np.interp(x, np.log(levels), heights_km) * 1000.
+    temp = np.interp(x, np.log(levels), temperatures)
+    return z, temp
+
+
+def calculate_rdiffs(element_mass,isotope_mass,euv=1.):
     """
        easy way of calculating Rdiffs factors 
     """
+    z, temperature = upper_atmosphere(euv)
     Rdiffs = [None]*len(element_mass)
     for i in range(len(element_mass)):
         Rdiffs[i] = [None]*len(isotope_mass[i])
         for j in range(len(isotope_mass[i])):
-            delta_m=(element_mass[i]-isotope_mass[i][j])*amu
-            Rdiffs[i][j] = R_diffij(delta_m,g_mars,deltaz,T)
+            delta_m=(isotope_mass[i][j]-element_mass[i])*amu
+            Rdiffs[i][j] = R_diffij(delta_m,g_mars,z,temperature)
             
     return Rdiffs
     
-def F_i_sp(F_CO2,N_i,N_CO2,elements):
+def F_i_sp(F_CO2,N_i,N_CO2,elements,euv=1.):
     """
     See equation 6 from Kurokawa et al (2018)
     
@@ -68,13 +84,19 @@ def F_i_sp(F_CO2,N_i,N_CO2,elements):
     """
     #the number of commas in this equation are confusing me as 
     #I'm unsure what they're denoting.
+    z, temperature = upper_atmosphere(euv)
     Y_i = np.zeros(len(elements))
     delta_m = np.zeros(len(elements))
     R_diff = np.zeros(len(elements))
     for i in range(len(elements)):
         Y_i[i] = yields[elements[i]]
+        # Jakosky et al. (1994) Eq. 12: the Table II yield for N (2.4) is in
+        # N ATOMS ejected; when tracking N2 molecules "the N yield [is]
+        # divided by 2". N_i for 'N' here is the N2 molecule inventory.
+        if elements[i] == 'N':
+            Y_i[i] = Y_i[i] / 2.
         delta_m[i]=(amus[elements[i]]-amu_co2)*amu
-        R_diff[i] = R_diffij(delta_m[i],g_mars,deltaz,T)
+        R_diff[i] = R_diffij(delta_m[i],g_mars,z,temperature)
     
     
     alpha1 = alpha(N_i, N_CO2, R_diff)

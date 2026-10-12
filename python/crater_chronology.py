@@ -19,11 +19,17 @@ def dN20_dt1(t):
 
     return N
 
+# Morbidelli et al. (2012, EPSL 355, 144) Fig. 3 caption, t = age in Gyr,
+# rates in craters D > 20 km per km^2 per Gyr (x1e6 here; only the shape is
+# used, as each run's impacts are normalised to the total impactor mass).
+#   model 1: Neukum & Ivanov (1994) exponential extended to 4.5 Ga (the blue
+#            line in Morbidelli Fig. 3; used in Bradley's thesis)
+#   model 2: sawtooth, solid curve for t > 4.1 Gy   (Kurokawa et al. 2018)
+#   model 3: sawtooth, dashed curve for t > 4.1 Gy
+# The previous min() cap at the NI94 4.5 Ga rate is not in the paper and has
+# been removed (it changed the post-4.1 Ga integral by 2-4%).
 def dN20_dt2(t):
-    # see figure 3, Morbidelli et al. 2012
-    # input time ago (i.e. should be positive)
-    N=np.minimum(2.5e-2*np.exp(-((4.5-t)/0.003)**0.34), \
-    	5.9e-7+2.7e-16*np.exp(6.93*4.5))
+    N=2.5e-2*np.exp(-((4.5-t)/0.003)**0.34)
     N=N*1e6
 
     return N
@@ -31,8 +37,7 @@ def dN20_dt2(t):
 def dN20_dt3(t):
     # see figure 3, Morbidelli et al. 2012
     # input time ago (i.e. should be positive)
-    N=np.minimum(2.0e-2*np.exp(-((4.5-t)/0.01)**0.5)  , \
-    	5.9e-7+2.7e-16*np.exp(6.93*4.5))
+    N=2.0e-2*np.exp(-((4.5-t)/0.01)**0.5)
     N=N*1e6
     return N
 

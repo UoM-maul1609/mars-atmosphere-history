@@ -37,7 +37,11 @@ voly = np.array([0.000002820281104255998, \
 			
 abundances1['Obs'] = np.array([volx,voly])
 
-errorbars1=[[420,620,800],[9.4,10.1,10.8],[0.15,0.2,0.25],\
+# Present-day observations, Kurokawa Table 4, as [low, central, high] in the
+# plotted quantities: d15N, 20Ne/22Ne, 38Ar/36Ar (= 1/(36Ar/38Ar = 4.2 +/- 0.1)),
+# 86Kr/84Kr, 136Xe/130Xe. (Previously d15N was 620 [420-800] instead of
+# 572 +/- 82, and 38Ar/36Ar was 0.20 +/- 0.05 instead of 0.238 +/- 0.006.)
+errorbars1=[[572-82,572,572+82],[9.4,10.1,10.8],[1/4.3,1/4.2,1/4.1],\
      [0.3006-0.0027,0.3006,0.3006+0.0027],[2.294-0.024,2.294,2.294+0.024]]
 
 atom_wgts=volx/1000.
@@ -152,70 +156,183 @@ def set_amount_of_element(carbon_moles):
     
     return ([carbon_moles,n2_moles],n_moles)
     
-def escape_fr(Imn, N, dN, dN2, Rdiffs_isotopes):
-    # equation 9
-    Imn_new=[None]*len(Imn)
-    # sputtering equation 9
+def _weights(ratios):
+    """Isotope fractions including the reference isotope (weight 1)."""
+    v = np.concatenate(([1.0], np.asarray(ratios, dtype=float)))
+    return v / np.sum(v)
+
+
+# Inventory basis for each isotope group [N, Ne, Ar, Kr, Xe].
+# The N ledger (mole_elements[1]) holds TOTAL N atoms. The noble-gas ledgers
+# hold REFERENCE-ISOTOPE moles (20Ne, 36Ar, 84Kr, 130Xe): they are built from
+# Lodders reference-isotope solar abundances and Kurokawa Fig. 2, which is
+# plotted per reference isotope. Mixing must use the matching basis, otherwise
+# reservoirs are weighted by 1/sum(ratios), which differs between atmosphere
+# and source (for Xe, Mars-like ~34 vs chondritic ~23, a 47% weighting error).
+REFERENCE_BASIS = [False, True, True, True, True]
+
+
+def _counts(ratios, inventory, reference_basis):
+    """Isotope populations [reference, others...] for a ledger amount."""
+    v = np.concatenate(([1.0], np.asarray(ratios, dtype=float)))
+    return inventory * (v if reference_basis else v / np.sum(v))
+
+
+def _default_basis(n_groups):
+    """Groups are assumed to start at N, except that four groups means the
+    noble gases only (the IDP call); pass basis explicitly to be safe."""
+    if n_groups == len(REFERENCE_BASIS) - 1:   # noble gases only (IDPs)
+        return list(REFERENCE_BASIS[1:])
+    if 1 <= n_groups <= len(REFERENCE_BASIS):
+        return list(REFERENCE_BASIS[:n_groups])
+    raise ValueError('Cannot infer inventory basis; pass basis explicitly')
+
+
+def _mix_one(ratios, source, inventory, amount, reference_basis=False):
+    """Exact mixing of isotope populations for a positive source amount.
+
+    inventory and amount must be on the same basis: total element atoms
+    (reference_basis=False) or reference-isotope atoms (True).
+    """
+    if amount <= 0.0:
+        return list(ratios)
+    if inventory < 0.0:
+        raise ValueError('Negative isotope-bearing elemental inventory')
+    p = (_counts(ratios, inventory, reference_basis) +
+         _counts(source, amount, reference_basis))
+    return list(p[1:] / p[0])
+
+
+def _escape_one(ratios, inventory, loss, factors, reference_basis=False):
+    """Finite isotope-selective removal, integrated in safe isotope substeps.
+
+    The escaping composition is proportional to isotope abundance times
+    the relative diffusion/photochemical factor (Kurokawa Eq. 9).
+    With reference_basis=False, `loss` is the total element loss. With
+    reference_basis=True, `inventory` and `loss` are reference-isotope
+    amounts (as computed by Eq. 6 from the reference-isotope ledger), so the
+    reference isotope loses exactly `loss` and the other isotopes lose
+    loss/inventory * N_k * R_k.
+    """
+    if loss <= 0.0:
+        return list(ratios)
+    if inventory <= 0.0 or loss >= inventory:
+        raise ValueError(f'Escape exceeds inventory: N={inventory:.6g}, loss={loss:.6g}')
+    counts = _counts(ratios, inventory, reference_basis)
+    relative = np.concatenate(([1.0], np.asarray(factors, dtype=float)))
+    if reference_basis:
+        loss = loss * np.sum(counts * relative) / counts[0]
+        if loss >= np.sum(counts):
+            raise ValueError('Escape exceeds inventory')
+    remaining_loss = float(loss)
+    for _ in range(1000):
+        if remaining_loss <= 1.e-12 * loss:
+            break
+        abundance_weighted = counts * relative
+        rate_fraction = abundance_weighted / np.sum(abundance_weighted)
+        # Do not remove over half any populated isotope in a substep.
+        step = min(remaining_loss, 0.5 * float(np.min(counts / rate_fraction)))
+        if step <= 0.0 or not np.isfinite(step):
+            raise ValueError('Invalid isotope escape substep')
+        counts -= step * rate_fraction
+        remaining_loss -= step
+    else:
+        raise ValueError('Isotope escape requires excessive subcycling')
+    return list(counts[1:] / counts[0])
+
+
+def escape_fr(Imn, N, dN, dN2, Rdiffs_isotopes, basis=None):
+    """Kurokawa (2018) Eq. 9: sputtering, then photochemical nitrogen.
+
+    N, dN and dN2 are element ledger amounts: total N atoms for nitrogen,
+    reference-isotope atoms for the noble gases (see REFERENCE_BASIS).
+    Photochemical N has R_14/15 = 1.4 * diffusive R_14/15, so
+    R_15/14 (stored here) is diffusive R_15/14 / 1.4.
+    """
+    basis = _default_basis(len(Imn)) if basis is None else basis
+    result = []
     for m in range(len(Imn)):
-        Imn_new[m] = [None] * len(Imn[m])
-        for n in range(len(Imn[m])):
-            Imn_new[m][n]=Imn[m][n]+\
-                Imn[m][n]*(Rdiffs_isotopes[m][n]-1.) * \
-                np.sum(Imn[m]) / \
-                np.sum([Rdiffs_isotopes[m][j]*Imn[m][j] for j in range(len(Imn[m]))]) *\
-                 dN[m]/N[m]
+        sputtered = _escape_one(Imn[m], N[m], dN[m], Rdiffs_isotopes[m],
+                                basis[m])
+        if m == 0:
+            photofactor = np.asarray(Rdiffs_isotopes[m]) / 1.4
+            sputtered = _escape_one(sputtered, N[m] - dN[m], dN2[m],
+                                    photofactor, basis[m])
+        elif dN2[m] != 0:
+            raise ValueError('Photochemical escape only implemented for nitrogen')
+        result.append(sputtered)
+    return result
 
 
-    Imn_new2=[None]*len(Imn)
-    # equation 9, photochemical escape
-    N = [N[i]-dN[i] for i in range(len(N))]
-    for m in range(len(dN2)):
-        Imn_new2[m] = [None] * len(Imn[m])
-        for n in range(len(Imn[m])):
-            Imn_new2[m][n]=Imn_new[m][n]+\
-                Imn_new[m][n]*(1.4*Rdiffs_isotopes[m][n]-1.) * \
-                np.sum(Imn_new[m]) / 1.4/ \
-                np.sum([Rdiffs_isotopes[m][j]*Imn_new[m][j] for j in range(len(Imn[m]))]) *\
-                 dN2[m]/N[m]
-
-    return Imn_new2
-
-def continuous_sources(Imn, Imn0, N, dN):
-    Imn_new=[None]*len(Imn)
-    # equation 10
-    for m in range(len(Imn)):
-        Imn_new[m] = [None] * len(Imn[m])
-        for n in range(len(Imn[m])):
-            Imn_new[m][n]=Imn[m][n]+(Imn0[m][n]-Imn[m][n])*np.sum(Imn[m]) / \
-                np.sum(Imn0[m]) * dN[m] / N[m]
-
-    return Imn_new
-    
+def continuous_sources(Imn, Imn0, N, dN, basis=None):
+    """Kurokawa Eq. 10 integrated as exact inventory mixing."""
+    basis = _default_basis(len(Imn)) if basis is None else basis
+    return [_mix_one(r, src, ni, amount, b) for r, src, ni, amount, b
+            in zip(Imn, Imn0, N, dN, basis)]
 
 
-    
-def impact_replenishment(Imn, Imn0_asteroids, Imn0_comets, N, dN, dN2):
-    Imn_new=[None]*len(Imn)
-    # asteroids eqaution 11
-    for m in range(len(Imn)):
-        Imn_new[m] = [None] * len(Imn[m])
-        for n in range(len(Imn[m])):
-            Imn_new[m][n]=(Imn[m][n]*np.sum(Imn0_asteroids[m])*N[m] + \
-                Imn0_asteroids[m][n]*np.sum(Imn[m])*dN[m]) / \
-                (np.sum(Imn0_asteroids[m])*N[m] + np.sum(Imn[m])*dN[m])
+def impact_replenishment(Imn, Imn0_asteroids, Imn0_comets, N, dN, dN2,
+                         basis=None):
+    """Kurokawa Eq. 11, sequential exact asteroid and comet mixing."""
+    mixed = continuous_sources(Imn, Imn0_asteroids, N, dN, basis)
+    return continuous_sources(mixed, Imn0_comets,
+                              np.asarray(N) + np.asarray(dN), dN2, basis)
 
-    Imn_new2=[None]*len(Imn)
-    # comets
-    N = [N[i]+dN[i] for i in range(len(N))]
-    for m in range(len(Imn)):
-        Imn_new2[m] = [None] * len(Imn[m])
-        for n in range(len(Imn[m])):
-            Imn_new2[m][n]=(Imn_new[m][n]*np.sum(Imn0_comets[m])*N[m] + \
-                Imn0_comets[m][n]*np.sum(Imn_new[m])*dN2[m]) / \
-                (np.sum(Imn0_comets[m])*N[m] + np.sum(Imn_new[m])*dN2[m])
 
-    return Imn_new2
-    
+def evolve_open_system(ratios, inventory, k_channels, factor_channels,
+                       supplies, dt, reference_basis=False):
+    """Exact solution over one step of the isotope population balance
+
+        dP_j/dt = s_j - k_j P_j,   k_j = sum_c k_c f_{c,j}  (f = 1 for the
+                                                             reference isotope)
+
+    with constant per-particle escape rates k_c (s^-1) for each loss channel
+    c, relative isotope factors f_{c,j} (e.g. R_diff, or R_diff/1.4 for N
+    photochemistry) and constant supply rates s_j from the listed sources.
+    This is Kurokawa Eqs. 9-10 combined and integrated analytically:
+
+        P_j(dt) = P_j(0) exp(-k_j dt) + S_j (1 - exp(-k_j dt)) / (k_j dt),
+
+    where S_j is the total supplied over the step. Unlike applying escape
+    and then supply as separate sub-steps, it stays accurate when the escape
+    lifetime is much shorter than dt: it then relaxes to the supply-escape
+    steady state P_j = s_j / k_j, which is enriched in heavy isotopes by
+    1/R_j, instead of stripping the inventory and resetting it to the source
+    composition.
+
+    supplies: list of (amount, source_ratios) on the same basis as inventory.
+    Returns (new_ratios, new_inventory, removed_by_channel), where
+    removed_by_channel[c] is the ledger-basis amount lost through channel c.
+    """
+    P0 = _counts(ratios, inventory, reference_basis)
+    S = np.zeros_like(P0)
+    for amount, src in supplies:
+        if amount > 0.:
+            S = S + _counts(src, amount, reference_basis)
+    n = len(P0)
+    full_f = [np.concatenate(([1.0], np.asarray(f, dtype=float)))
+              for f in factor_channels]
+    k = np.zeros(n)
+    for kc, fc in zip(k_channels, full_f):
+        k = k + kc * fc
+    kdt = k * dt
+    decay = np.exp(-kdt)
+    with np.errstate(divide='ignore', invalid='ignore'):
+        growth = np.where(kdt > 1e-12, -np.expm1(-kdt) / kdt, 1. - 0.5 * kdt)
+    P = P0 * decay + S * growth
+    removed = P0 + S - P
+    removed_by_channel = []
+    for kc, fc in zip(k_channels, full_f):
+        with np.errstate(divide='ignore', invalid='ignore'):
+            share = np.where(k > 0., kc * fc / k, 0.)
+        r = removed * share
+        removed_by_channel.append(r[0] if reference_basis else r.sum())
+    if P[0] <= 0.:
+        return list(ratios), 0., removed_by_channel
+    new_inventory = P[0] if reference_basis else P.sum()
+    return list(P[1:] / P[0]), new_inventory, removed_by_channel
+
+
 if __name__ == "__main__":
     """
         plot

@@ -6,6 +6,7 @@ with `%run batch_runs.py`. Edit the CONFIG section for your experiment.
 from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 import getpass
+import os
 import tempfile
 
 import matplotlib.pyplot as plt
@@ -17,22 +18,34 @@ from main import run_model
 # ------------------------------------------------------------------
 # CONFIG: edit here. Seeds are always 0, 1, ..., NUM_RUNS - 1.
 # ------------------------------------------------------------------
-NUM_RUNS = 10
+NUM_RUNS = 100
 NUM_CORES = 10
 OBLIQUITY = 2  # -1: fixed threshold, 1: 0°, 2: 45°, 3: 90°
 SPUTTERING = True
 PHOTOCHEMICAL_ESCAPE = True
 COLLAPSED_PRESSURE_THRESHOLD = 0.1  # bar, classification for plotting ONLY
-# Match the original script: /tmp/<username>/ on macOS/Linux.
-OUTPUT_DIRECTORY = Path(tempfile.gettempdir()) / getpass.getuser()
+# Outputs go to /tmp/$USER/ on Unix-like systems (Linux and macOS).
+# tempfile.gettempdir() is NOT used there: on macOS it returns a per-session
+# /var/folders/... path, and on Linux it follows $TMPDIR. Windows falls back
+# to the system temp directory.
+def _output_directory():
+    user = getpass.getuser()
+    if os.name == 'posix':
+        return Path('/tmp') / user
+    return Path(tempfile.gettempdir()) / user
+
+
+OUTPUT_DIRECTORY = _output_directory()
+# Kurokawa et al. (2018) best-fit model (Section 3.1; Figs 7-12).
 MODEL_KWARGS = dict(
     sputtering_flag=SPUTTERING,
     pce_flag=PHOTOCHEMICAL_ESCAPE,
-    C_Ne_IDP=1.0,
-    f_comet=0.0005,
-    X_gas=0.01,
-    crater_model=1,
-    dynamo_time=4.1,
+    X_gas=0.01,       # degassed CO2 mass fraction of asteroids (1%)
+    C_vol=5.0,        # volcanic degassing multiplier
+    C_Ne_IDP=10.0,    # IDP neon multiplier
+    f_comet=0.001,    # comet:asteroid number ratio after 4.1 Ga (0.1%)
+    crater_model=2,   # Morbidelli et al. (2012) sawtooth; 1 = NI94 (Bradley)
+    dynamo_time=4.1,  # sputtering starts when the dynamo stops (Ga)
 )
 
 
@@ -83,10 +96,21 @@ def plot_trajectories(output, collapsed, folder):
     return filename
 
 
+# Kurokawa Figs 2/6 plot abundances per mass of solid Mars relative to solar,
+# in units not given in the paper. Convert ledger moles to those units by
+# calibrating on present-day carbon: 6 mbar of CO2 must map onto the digitised
+# observed C value. This gives ~2.7e16, not the previously hard-coded 1e16,
+# which shifted every model curve up by ~2.7x against the observations.
+# Cross-check: N (2.8% N2) and 36Ar give 3.4e16 and 2.1e16 respectively.
+def abundance_normalisation(area, g=3.721, p_co2_present=6.e-3):
+    co2_moles = p_co2_present * 1e5 * area / g / 44.01e-3
+    return co2_moles / (solar_abundances[0] * abundances1['Obs'][1][0])
+
+
 def plot_abundances(output, collapsed, folder):
     fig, ax = plt.subplots(figsize=(8, 5), constrained_layout=True)
     for i, (t, y, elements, isotopes, area) in enumerate(output):
-        abundance = elements / solar_abundances / 1e16
+        abundance = elements / solar_abundances / abundance_normalisation(area)
         style = dict(color='tab:blue', lw=1.3, alpha=.7) if collapsed[i] else dict(
             color='0.5', lw=.65, alpha=.45)
         ax.plot(element_mass, abundance, '-s', ms=3, **style)
