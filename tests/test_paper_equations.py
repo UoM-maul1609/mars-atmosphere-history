@@ -154,4 +154,22 @@ class PaperEquationTests(unittest.TestCase):
         tsp35=n2/sput.F_i_sp(F,np.array([co2,n2]),co2,['C','N'],euv=e)[1]/GYR
         self.assertTrue(0.6 < tsp35/0.005 < 1.6, tsp35)
 
+    def test_fig2_normalisation_and_comet_volatiles(self):
+        # Fig. 2 asteroids should come out at ~1 wt% CO2 (the X_gas = 1%
+        # case); comets at ~3x that, independent of X_gas.
+        Kkg=iso.FIG2_MOL_PER_KG
+        ast=iso.abundances1['Asteroids'][1][0]*iso.solar_abundances[0]*Kkg*44.01e-3
+        self.assertTrue(0.007 < ast < 0.012, ast)
+        self.assertTrue(0.025 < iso.comet_co2_mass_fraction() < 0.033)
+
+    def test_no_default_upper_pressure_cap(self):
+        # Kurokawa Fig. 5a: X_gas = 10% gives tens of bar; no 2.75 bar cap.
+        import main
+        y=main.run_model(0,-1,X_gas=0.1,C_vol=1.,C_Ne_IDP=1.)[1]
+        self.assertGreater(y[-1,0], 3.)
+        out=main.run_model(0,-1,X_gas=0.1,C_vol=1.,C_Ne_IDP=1.,P_upper_cap=2.75)
+        y,A=out[1],out[4]
+        pco2=y[:,8]*3.721/A/1e5          # cap applies to CO2, not total
+        self.assertLessEqual(pco2[1:].max(), 2.75+1e-9)
+
 if __name__ == '__main__': unittest.main()

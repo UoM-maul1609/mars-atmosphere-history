@@ -112,6 +112,29 @@ isotope_comps['IDPs'][2]=1./isotope_comps['IDPs'][2]
 
 
 
+# Kurokawa Fig. 2 normalisation: abundance = (mol of reference isotope per kg
+# of body) / (solar mol per kg). Calibrated so that the present-day 6 mbar of
+# CO2 reproduces the digitised observed C point (as for the abundance plot):
+# mol_i per kg = y_i * solar_abundances[i] * FIG2_MOL_PER_KG.
+# Check: Fig. 2 asteroids then contain 0.94 wt% CO2-equivalent, i.e. the
+# X_gas = 1% case, and CI-like 0.26 wt% C.
+def _fig2_mol_per_kg(p_co2_present=6.e-3, area=4.*np.pi*3389.5e3**2,
+                     g=3.721, m_mars=6.39e23):
+    co2_moles = p_co2_present*1e5*area/g/44.01e-3
+    return co2_moles/(solar_abundances[0]*abundances1['Obs'][1][0])/m_mars
+
+
+FIG2_MOL_PER_KG = _fig2_mol_per_kg()
+
+
+def comet_co2_mass_fraction():
+    """Degassed CO2-equivalent mass fraction of comets from Kurokawa
+    Fig. 2 (~2.9 wt%). Kurokawa §2.2: comet volatiles come from Fig. 2
+    (Dauphas 2003 noble gases; C and N from solar C/Ar), independent of the
+    asteroid parameter X_gas."""
+    return abundances1['Comets'][1][0]*solar_abundances[0]*FIG2_MOL_PER_KG*44.01e-3
+
+
 def set_amount_of_element(carbon_moles):
     """
         -from moles of total carbon, work out moles of carbon-12

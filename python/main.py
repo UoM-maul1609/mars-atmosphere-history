@@ -30,7 +30,8 @@ def test(y,t,omega):
 def run_model(runNo, obliquity_flag, sputtering_flag=True, pce_flag=True,\
         X_gas=0.01,f_comet=0.001, C_vol=5.0, crater_model=2,C_Ne_IDP = 10.,\
 	dynamo_time = 4.1, output_file=None, comet_time=4.1, D_max=None,
-	impact_log=None, rate_log=None, f_sp=1.0, f_ph_N=1.0):
+	impact_log=None, rate_log=None, f_sp=1.0, f_ph_N=1.0, X_gas_comet=None,
+	P_upper_cap=None, T_atm=None):
     """Run one Monte Carlo history (seeded by runNo).
 
     Impacts are discrete events (Kurokawa §2.2, Fig. 12 caption): N =
@@ -60,7 +61,16 @@ def run_model(runNo, obliquity_flag, sputtering_flag=True, pce_flag=True,\
     Ggrav=6.67e-11 # gravitational constant
     grav_mars=3.721 # m/s^2
     rho_t=4000. # density of martian surface
-    tmars = 210. # fixed reference temperature for impact-atmosphere scale height
+    # Atmospheric temperature for the impact scale height and surface
+    # density. Kurokawa §2.1 uses one climate assumption: 273.16 K before
+    # collapse and 210 K after; §4.3 lists "the assumed temperature" among the
+    # impact-model inputs. The previous code fixed 210 K throughout.
+    # Pass T_atm to force a constant value (e.g. 210. for the old behaviour).
+    def _t_atm(is_collapsed):
+        if T_atm is not None:
+            return T_atm
+        return 210. if is_collapsed else 273.16
+    tmars = _t_atm(False)
     Rgas = 8.314 # ideal gas constant
     #MolW_atm = 44.01e-3 # molecular weight of martian atmosphere - may change???
     MolW_atm = np.array([44.01e-3, 28.0134e-3, 18.01528e-3])
@@ -174,6 +184,8 @@ def run_model(runNo, obliquity_flag, sputtering_flag=True, pce_flag=True,\
     nsteps = len(t)
     n_ode=11
     rng=np.random.RandomState(runNo)
+    if X_gas_comet is None:
+        X_gas_comet = isotopic_data.comet_co2_mass_fraction()
     """
         ----------------------------------------------------------------------------------
     """
@@ -239,15 +251,22 @@ def run_model(runNo, obliquity_flag, sputtering_flag=True, pce_flag=True,\
         num_impacts = len(diams)
         if num_impacts:
             # sum(Matm) / sum(Natm) is the molecular weight
+            tmars = _t_atm(collapsed)
+            Hscale = Rgas*tmars/(np.sum(Matm)/np.sum(Natm)*grav_mars)
             rho_0 = Patm*1.e5/tmars/(Rgas/(np.sum(Matm)/np.sum(Natm)))
             xi=np.maximum(impactor_atmos_loss_gain_eq4_5. \
                 dimensionless_xi(diams,rho_t,rho_pr, vels, uesc, Hscale, rho_0), 1.e-10)
             deltaM=impactor_atmos_loss_gain_eq4_5.change_atmos(xi,vels,uesc,mass)
             Xpr=np.maximum(impactor_atmos_loss_gain_eq4_5. \
                 normalised_projectile_mass(rho_t,rho_pr,vels,uesc,xi),0)
-            retained = (1.-Xpr)*mass*X_gas      # degassed CO2-equivalent mass
-            mass_added_comet = np.sum(retained[is_comet])
-            mass_added_asteroid = np.sum(retained[~is_comet])
+            # Degassed CO2-equivalent mass. Asteroids: X_gas. Comets: their
+            # own Fig. 2 volatile content (X_gas_comet, ~2.9 wt%); previously
+            # comets also used X_gas, undersupplying all cometary volatiles
+            # (C, N and noble gases) by ~3x for X_gas = 1%. The noble-gas and
+            # N amounts follow from this CO2 mass via the comet ratios to C.
+            retained = (1.-Xpr)*mass
+            mass_added_comet = np.sum(retained[is_comet])*X_gas_comet
+            mass_added_asteroid = np.sum(retained[~is_comet])*X_gas
             # Impacts within the step act in sequence on the remaining
             # atmosphere: remaining fraction = prod(1 - f_j), each f_j <= 0.99.
             M_now = np.sum(Natm*MolW_atm)
@@ -445,8 +464,13 @@ def run_model(runNo, obliquity_flag, sputtering_flag=True, pce_flag=True,\
         
         
         # readjust Matm: firstly it cant go above the svp from Forget et al:
-        if(Matm[0]*grav_mars/Amars/1.e5 > mars_temp_forget.data['collapse2']):
-        	Matm[0]=mars_temp_forget.data['collapse2']*Amars*1e5/grav_mars
+        # Optional upper CO2 limit (Forget et al. 2013 ~3 bar CO2-ice caps).
+        # Kurokawa et al. (2018) only discuss this limit: their Fig. 5 shows
+        # pressures up to ~6 bar (X_gas = 1%) and ~90 bar (X_gas = 10%), so
+        # no cap is applied by default (P_upper_cap=None). The previous code
+        # always capped CO2 at 2.75 bar, deleting delivered CO2.
+        if P_upper_cap is not None and Matm[0]*grav_mars/Amars/1.e5 > P_upper_cap:
+        	Matm[0]=P_upper_cap*Amars*1e5/grav_mars
         	Patm = np.sum(Matm)*grav_mars/(Amars)/1e5
         	mole_elements[0] = Matm[0] / MolW_atm[0]
 
@@ -490,7 +514,8 @@ def run_model(runNo, obliquity_flag, sputtering_flag=True, pce_flag=True,\
         mole_elements[0] = Natm[0]
 
         # update scale height
-        Hscale=Rgas*tmars/(np.sum(Matm)/np.sum(Natm)*grav_mars) # scale height - m - may change???
+        tmars = _t_atm(collapsed)
+        Hscale=Rgas*tmars/(np.sum(Matm)/np.sum(Natm)*grav_mars)
         Matm = Natm *MolW_atm
         # calculate the temperature global mean from Forget et al.
         tglobal = mars_temp_forget.meanTvP1(Patm)

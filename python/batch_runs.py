@@ -18,7 +18,7 @@ from main import run_model
 # ------------------------------------------------------------------
 # CONFIG: edit here. Seeds are always 0, 1, ..., NUM_RUNS - 1.
 # ------------------------------------------------------------------
-NUM_RUNS = 100
+NUM_RUNS = 10
 NUM_CORES = 10
 OBLIQUITY = 2  # -1: fixed threshold, 1: 0°, 2: 45°, 3: 90°
 SPUTTERING = True
@@ -114,6 +114,15 @@ def plot_abundances(output, collapsed, folder):
         style = dict(color='tab:blue', lw=1.3, alpha=.7) if collapsed[i] else dict(
             color='0.5', lw=.65, alpha=.45)
         ax.plot(element_mass, abundance, '-s', ms=3, **style)
+    collapsed_abund = [elements / solar_abundances / abundance_normalisation(area)
+                       for (t, y, elements, isotopes, area), c in zip(output, collapsed) if c]
+    if collapsed_abund:
+        # Kurokawa Fig. 6 compares the AVERAGE of the collapsed cases. Noble
+        # gases in collapsed runs depend on rare late comet impacts, so the
+        # mean can lie well above most individual runs.
+        mean = np.mean(collapsed_abund, axis=0)
+        ax.plot(element_mass, mean, 's-', color='navy', lw=2.5, ms=7,
+                label=f'Mean of collapsed runs (n={len(collapsed_abund)})')
     ax.plot(element_mass, abundances1['Obs'][1], 'ro-', lw=1.5, ms=6,
             label='Observed (digitised Kurokawa et al. fig. 6)')
     ax.set_yscale('log')

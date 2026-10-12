@@ -13,7 +13,7 @@ The model advances an atmospheric state on nominal **1 Myr** steps, starting wit
 5. **Volcanic degassing:** prescribed time-dependent CO₂, N₂ and H₂O sources contribute atmospheric mass, trace elements and isotopes.
 6. **Atmospheric collapse / saturation:** the `obliquity_flag=-1` baseline treats collapse below 0.5 bar as a residual **6 mbar CO₂ partial pressure**, following a simplified approach in Kurokawa et al. Obliquity-dependent modes (`1`, `2`, `3`) follow Bradley (MPhil thesis, §4.3.1): collapse is triggered when the CO₂ partial pressure exceeds the CO₂ saturation vapour pressure at the PlanetWRF 5th-percentile surface temperature for the current pressure; CO₂ is then held at 6 mbar, as in the baseline. See *Obliquity collapse modes* below for known limitations. **There is no prognostic condensed-CO₂ reservoir**; do not interpret this as closed-system carbon conservation across collapse or reinflation.
 
-The atmospheric scale height used in the impact calculations assumes a fixed **210 K** reference temperature. The model also computes a pressure-dependent global-mean temperature for diagnostic output, not as feedback into escape dynamics. H₂O is capped using the ice saturation-vapour-pressure relation at 273.16 K in the warm regime and 210 K in the collapsed 0.5-bar baseline regime (Kurokawa section 2.1).
+The atmospheric scale height and surface density used in the impact calculations use **273.16 K before collapse and 210 K after** (Kurokawa §2.1, §4.3; `T_atm` forces a constant). No upper CO₂ pressure cap is applied by default (`P_upper_cap`). The model also computes a pressure-dependent global-mean temperature for diagnostic output, not as feedback into escape dynamics. H₂O is capped using the ice saturation-vapour-pressure relation at 273.16 K in the warm regime and 210 K in the collapsed 0.5-bar baseline regime (Kurokawa section 2.1).
 
 **Isotope representation:** the code advances ratios by mixing or removing explicit normalised isotope populations (including the reference isotope) corresponding to Kurokawa et al. equations 9–11. These finite-step updates preserve isotope populations during mixing and apply differential fractionation during escape; isotope inventories are not stored as independent state variables. The evolution of C/N is dynamically synchronised to CO₂/N₂ in the corrected version; the noble gases retain the paper-inspired abundance conventions. Model outputs should be compared with observations before asserting agreement.
 
@@ -234,7 +234,7 @@ Effect on a collapsed best-fit run (seed 0, `C_vol = 5`, `C_Ne,IDP = 10`, `f_com
    - N₂ sputtering then dominates.
    - The original code hid this by multiplying photochemical escape by `N2/N2_initial`, a factor with no physical basis that the previous review removed.
    - Fox & Dalgarno (1983) and Jakosky et al. (1994) are needed to fix the normalisation. Until then, treat N abundances and δ¹⁵N as provisional.
-3. **Comet volatiles scale with `X_gas`.** Comet CO₂ delivery is `f_comet × X_gas × retained mass`, but Kurokawa sets comet volatile content from Fig. 2 (C about 3× CI per unit mass), independent of `X_gas`. With `X_gas = 1%` this probably undersupplies cometary noble gases by more than an order of magnitude, so calibrated `f_comet` values are not comparable with the paper.
+3. ~~Comet volatiles scale with `X_gas`.~~ **Resolved:** see *October 2026: noble-gas abundances*.
 4. ~~Default chronology.~~ **Resolved:** checked against Morbidelli et al. (2012); see *October 2026: crater chronology*. Collapses still occur at about 4.3–4.4 Ga, before the 4.1 Ga ALH84001 constraint; this is not caused by the chronology.
 5. ~~Photochemical N EUV cap.~~ **Resolved:** the cap was removed (October 2026: nitrogen).
 6. **Euler erosion.** Erosion removes Σf of the atmosphere in one step instead of 1 − exp(−Σf). The 50% cap never binds in the tested seeds; the largest step loss was 48%, against 38% if compounded.
@@ -331,7 +331,7 @@ Also verified against Jakosky Table III: R(28/44) = 17.4, R(15/14) = 0.837, R(38
 
 - **δ¹⁵N** in collapsed runs is about 100‰ below the observed range.
 - **Short transients after collapse and dynamo shutdown,** within a few Myr of 4.1 Ga: ³⁸Ar/³⁶Ar up to about 1, δ¹⁵N up to about 1,200‰. They are Rayleigh fractionation of the inventory left from the thick atmosphere as it is sputtered away, before supply takes over.
-- **Ne and Ar are low in collapsed runs.** This is mostly the comet-delivery issue: comet volatiles scale with `X_gas`.
+- **Ne and Ar are low in collapsed runs.** See *October 2026: noble-gas abundances*.
 
 ## October 2026: crater chronology
 
@@ -353,4 +353,87 @@ Model 2 puts 19% of impacts after 4.1 Ga. This is consistent with Morbidelli's e
 
 **Effect.** In 40 fixed-threshold seeds, 3 collapse, at 4.28–4.41 Ga, against 4 at 4.26–4.38 Ga with model 1. All three chronologies put 70–78% of impacts before 4.3 Ga. Runs that draw no large volatile-delivering body therefore lose their atmosphere then, whichever chronology is chosen.
 
-Kurokawa's collapses cluster around 4 Ga and the ALH84001 constraint requires more than 0.5 bar at 4.1 Ga, so a difference in collapse timing remains. Candidates are the comet volatile delivery (see the equation audit) and impact-erosion details such as the fixed 210 K scale height. It is not the chronology.
+See *October 2026: comparison with Kurokawa's published results* for the later fixes to collapse statistics: no upper pressure cap, and the 273.16/210 K temperature regime.
+
+## October 2026: noble-gas abundances
+
+### Comet volatile content (fixed)
+
+Kurokawa §2.2 takes comet volatiles from Fig. 2 (noble gases from Dauphas 2003; C and N from solar C/Ar), independent of the asteroid parameter `X_gas`. The code gave comets the asteroid value `X_gas`, applying only the comet ratios relative to C.
+
+- **Normalisation.** Fig. 2 plots (mol per kg of body)/(solar), in units the paper does not state. Calibrated so that 6 mbar of present-day CO₂ reproduces the observed C point (`isotopic_data.FIG2_MOL_PER_KG`), Fig. 2 asteroids contain 0.94 wt% CO₂-equivalent, i.e. the `X_gas = 1%` case. This is a consistency check on the normalisation.
+- **Comet content.** Comets come out at 2.9 wt% CO₂-equivalent (`isotopic_data.comet_co2_mass_fraction()`). All cometary C, N and noble gases were therefore about 3× too low for `X_gas = 1%`.
+- **Code change.** Comet delivery now uses this value. `run_model(..., X_gas_comet=...)` overrides it.
+
+### Abundance plot
+
+`batch_runs.py` now also plots the **mean of the collapsed runs**, as Kurokawa Fig. 6 does ("the averaged value of the collapsed cases").
+
+### Results (collapsed runs, model/observed)
+
+| | C | N | Ne | Ar | Kr | Xe |
+|---|---|---|---|---|---|---|
+| Before comet fix (median) | 1 | 0.9 | 0.26 | 0.03 | 0.24 | 0.37 |
+| After (median, 400 seeds, 30 collapsed) | 1 | 0.88 | 0.25 | 0.014 | 0.59 | 0.49 |
+| After (mean, 400 seeds, 30 collapsed) | 1 | 1.0 | 0.26 | 0.044 | 0.96 | 0.63 |
+
+Collapsed-run isotope means over the same 400 seeds:
+
+| δ¹⁵N | ²⁰Ne/²²Ne | ³⁶Ar/³⁸Ar | ⁸⁶Kr/⁸⁴Kr | ¹³⁶Xe/¹³⁰Xe |
+|---|---|---|---|---|
+| 438‰ (obs 572 ± 82) | 10.26 (10.1 ± 0.7) | 4.54 (4.2 ± 0.1) | 0.3021 (0.3006 ± 0.0027) | 1.87 (2.29 ± 0.02; Kurokawa also misses Xe) |
+
+### Ne and Ar budgets (not changed)
+
+**Ar.** In collapsed runs Ar is set by supply and sputtering.
+- *Supply:* volcanic about 7×10¹⁷ and IDP about 5×10¹⁷ ³⁶Ar atoms/s at about 1 Ga, matching Kurokawa Fig. 12b.
+- *Loss:* lifetimes match Fig. 14c (about 6 Gyr at 6 mbar today).
+- *Result:* without a late comet the inventory stays at 1–5% of observed. A run with about 10¹⁵ kg of comets in its last Gyr reaches about 45%.
+- *Why so few:* with `f_comet = 0.1%` only about 0.4 comets are expected in the last Gyr, so most histories get none. Over 400 seeds the best collapsed run reaches 0.45, and the mean is 0.044.
+- *Cross-check against Kurokawa's own best-fit run:* their Fig. 12b present-day Ar sputtering of about 2.5×10¹⁸ atoms/s, divided by the Fig. 14c lifetime, implies an Ar inventory of about 10% of observed. Their reported agreement is on a log scale spanning ten orders of magnitude. No code error has been found that accounts for the remaining factor.
+
+**Ne.** Ne comes out at about 0.26. This is the steady state between IDP supply (Table 3, `C_Ne_IDP = 10`) and sputtering. The Ne lifetime of about 0.16 Gyr today agrees with Jakosky et al.'s "about 10⁸ years". It follows directly from the published parameterisation, so this code cannot reproduce Kurokawa's statement that `C_Ne_IDP = 10` matches the observed Ne.
+
+**Uncollapsed runs.** These (about 1–8 bar) retain far more of every species, especially their initial Xe. Kurokawa compares only collapsed runs with present-day Mars.
+
+## October 2026: comparison with Kurokawa's published results
+
+The model was compared figure by figure with Kurokawa et al. (2018).
+
+### Fixes
+
+1. **No upper CO₂ pressure cap.** The code deleted CO₂ above 2.75 bar (Forget et al.'s CO₂-ice limit). Kurokawa only *discusses* that limit (§2.1); their Fig. 5 shows uncollapsed pressures up to about 6 bar (`X_gas` = 1%) and about 90 bar (`X_gas` = 10%). The cap is now off by default; `run_model(..., P_upper_cap=2.75)` restores it.
+2. **Atmospheric temperature for impact erosion.** The scale height and surface density in Eq. 2 used a fixed 210 K. Kurokawa's model has one climate assumption, 273.16 K before collapse and 210 K after (§2.1), and §4.3 lists "the assumed temperature" among the impact inputs. The code now follows that regime; `T_atm=210.` restores the old behaviour.
+
+### Reproduction of Kurokawa Fig. 5 (pressure evolution)
+
+| Setup | Kurokawa | This code |
+|---|---|---|
+| (a) `X_gas` 10%, `C_vol` 1 | 10–90 bar, mostly 20–50 | final median 26 bar, range 6–80 (40 seeds) |
+| (b) `X_gas` 1%, `C_vol` 1, collapse fraction | roughly half | 41% (33/80) with 273/210 K; 26% with fixed 210 K |
+| (b) collapse times | 4.5 to ~3.9 Ga, many in the first ~100 Myr | 4.45–4.06 Ga, many at 4.45–4.40 Ga |
+| (b) uncollapsed final pressure | 0.7–6 bar | 0.8–7.9 bar |
+
+### Reproduction of Kurokawa best fit (Figs 6c, 7–9; collapsed-case means)
+
+Settings: `X_gas` 1%, `C_vol` 5, `C_Ne_IDP` 10, `f_comet` 0.1%, 160 seeds, 28 collapsed.
+
+| Model/observed | C | N | Ne | Ar | Kr | Xe |
+|---|---|---|---|---|---|---|
+| Kurokawa Fig. 6c (read off) | 1 | ~1.3 | ~0.28 | ~0.09 | ~1.7 | ~0.75 |
+| This code | 1 | 1.1 | 0.26 | 0.18 | 0.98 | 0.66 |
+
+| Isotopes, collapsed mean | δ¹⁵N | ²⁰Ne/²²Ne | ³⁸Ar/³⁶Ar | ⁸⁶Kr/⁸⁴Kr | ¹³⁶Xe/¹³⁰Xe |
+|---|---|---|---|---|---|
+| Kurokawa Figs 7–9 (read off) | ~505 ± 65‰ | ~10.4 | ~0.225 | matched | not matched |
+| This code | 432‰ | 10.26 | 0.214 | 0.3021 | 1.88 |
+| Observed | 572 ± 82‰ | 10.1 ± 0.7 | 0.238 ± 0.006 | 0.3006 ± 0.0027 | 2.294 ± 0.024 |
+
+The time evolution matches as well:
+- δ¹⁵N holds a quasi-steady plateau of about 150–175‰ from about 3.5 to about 1 Ga and rises when volcanism wanes.
+- ²⁰Ne/²²Ne stays at about 9.5 in collapsed runs and rises to about 12 in uncollapsed ones.
+- ³⁸Ar/³⁶Ar spikes after 4.1 Ga and relaxes to about 0.25.
+
+### What this means for the noble gases
+
+Kurokawa's own best fit is about 3.5× below the observed Ne and about 10× below the observed Ar (Fig. 6c, mean of collapsed cases). The paper treats this as a match because its 1σ error bars span orders of magnitude. This code reproduces the published model within about 2× for every element, so the remaining Ne and Ar shortfalls relative to observations belong to the published parameterisation, not to this implementation.
