@@ -31,7 +31,9 @@ def run_model(runNo, obliquity_flag, sputtering_flag=True, pce_flag=True,\
         X_gas=0.01,f_comet=0.001, C_vol=5.0, crater_model=2,C_Ne_IDP = 10.,\
 	dynamo_time = 4.1, output_file=None, comet_time=4.1, D_max=None,
 	impact_log=None, rate_log=None, f_sp=1.0, f_ph_N=1.0, X_gas_comet=None,
-	P_upper_cap=None, T_atm=None):
+	P_upper_cap=None, T_atm=None, tracers=None, tracer_split_ga=4.1,
+	K_reg=None, xe_ion_k=0., xe_ion_mc=180., xe_ion_end=None,
+	xe_initial=None):
     """Run one Monte Carlo history (seeded by runNo).
 
     Impacts are discrete events (Kurokawa §2.2, Fig. 12 caption): N =
@@ -43,6 +45,34 @@ def run_model(runNo, obliquity_flag, sputtering_flag=True, pce_flag=True,\
     for every impact. Pass a list as rate_log to receive, per step,
     (time_yr, volcanic N2, sputtered N2, photochemical N2 [molecules/s],
     pN2 [bar], pCO2 [bar]) -- comparable with Kurokawa Fig. 12a.
+
+    tracers: pass an empty dict to tag the noble-gas reference isotopes
+    (20Ne, 36Ar, 84Kr, 130Xe; moles) by origin. On return it holds arrays
+    [Ne, Ar, Kr, Xe] for 'pre' (everything present at tracer_split_ga, i.e.
+    the initial atmosphere plus all earlier deliveries) and the later sources
+    'ast', 'com', 'volc' and 'idp'. Tracers undergo the same impact erosion
+    and the same exact supply/escape solution as the inventory (at the
+    reference-isotope escape rate), so they sum to mole_elements[2:6].
+
+    K_reg: regolith partition factors [Ne, Ar, Kr, Xe] (default all 0).
+    Each noble gas is split between the atmosphere and a surface reservoir
+    (adsorbed on regolith / trapped in ice) in exchange equilibrium, holding
+    K times the atmospheric amount. The ledger (mole_elements) then tracks
+    the combined inventory; impact erosion, sputtering and ion escape act
+    only on the atmospheric share 1/(1+K), and adsorption is assumed not to
+    fractionate isotopes. The returned mole_elements are ATMOSPHERIC amounts
+    (combined / (1+K)) so they compare with observations; tracers stay on
+    the combined basis (their fractions are unaffected).
+
+    xe_ion_k, xe_ion_mc, xe_ion_end: Xe ion escape dragged by an escaping
+    H+/O+ wind (Zahnle et al. 2019; Cassata et al. 2022), applied before
+    xe_ion_end Ga (default dynamo_time). xe_ion_k is the per-atom escape rate
+    of atmospheric 130Xe (Gyr^-1). Isotopes escape in proportion to
+    (m_c - m)/(m_c - 130), the drag-escape mass dependence with crossover
+    mass m_c = xe_ion_mc; Kr (not ionised by charge exchange with H+) is
+    not affected. With xe_ion_k > 0 the initial Xe is unfractionated
+    (chondritic, as volcanic gas) unless xe_initial is given; Kurokawa
+    instead starts from the present Mars Xe composition.
 
     f_sp and f_ph_N are optional multipliers on all sputtering rates and on
     photochemical N escape (as f_sp and f_pN in Hu & Thomas 2023, who
@@ -92,7 +122,15 @@ def run_model(runNo, obliquity_flag, sputtering_flag=True, pce_flag=True,\
     
     isotope_comps_sim = np.array(isotopic_data.isotope_comps['Volcanic degassing']).copy()
     ind,=np.where(['Xe' in iso for iso in isotopic_data.isotopes])
-    isotope_comps_sim[ind]=np.array(isotopic_data.isotope_comps['Mars'])[ind].copy()
+    if xe_initial is None:
+        xe_initial = 'Volcanic degassing' if xe_ion_k > 0. else 'Mars'
+    isotope_comps_sim[ind]=np.array(isotopic_data.isotope_comps[xe_initial])[ind].copy()
+    K_reg = np.zeros(4) if K_reg is None else np.asarray(K_reg, dtype=float)
+    atm_share = 1. / (1. + K_reg)              # atmospheric fraction [Ne..Xe]
+    if xe_ion_end is None:
+        xe_ion_end = dynamo_time
+    xe_masses = np.array(isotopic_data.isotope_mass[8:16], dtype=float)
+    R_xe_ion = np.maximum(xe_ion_mc - xe_masses, 0.) / (xe_ion_mc - 130.)
     isotopes = [None]*5
     isotopes[0] = [isotopic_data.isotopes[0]]
     isotopes[1] = [isotopic_data.isotopes[1]]
@@ -226,6 +264,11 @@ def run_model(runNo, obliquity_flag, sputtering_flag=True, pce_flag=True,\
     imp_comet = (imp_time > -comet_time*1e9) & \
         (rng.rand(len(imp_diam)) < f_comet/(1.+f_comet))
     step_bounds = np.searchsorted(imp_step, np.arange(nsteps))
+    if tracers is not None:
+        tracers.clear()
+        tracers['pre'] = np.array(mole_elements[2:6], dtype=float)
+        for key in ('ast', 'com', 'volc', 'idp'):
+            tracers[key] = np.zeros(4)
     
     # escape velocity
     uesc=impactor_atmos_loss_gain_eq4_5.escape_velocity(Ggrav,Mmars,Rmars)
@@ -281,8 +324,14 @@ def run_model(runNo, obliquity_flag, sputtering_flag=True, pce_flag=True,\
         mass_added = mass_added_comet + mass_added_asteroid
 
         # erosion is not isotopically fractionating (Kurokawa §2.7)
+        # Noble gases: only the atmospheric share 1/(1+K) is exposed.
         Natm = Natm *(1.- const1)
-        mole_elements = mole_elements*(1.-const1)
+        mole_elements[:2] = mole_elements[:2]*(1.-const1)
+        noble_keep = 1. - const1*atm_share
+        mole_elements[2:6] = mole_elements[2:6]*noble_keep
+        if tracers is not None:
+            for key in tracers:
+                tracers[key] *= noble_keep
 
         # 4a add the carbon dioxide outgassed from asteroids and comets
         Natm[0] = Natm[0]+mass_added / MolW_atm[0]
@@ -346,6 +395,10 @@ def run_model(runNo, obliquity_flag, sputtering_flag=True, pce_flag=True,\
         mole_elements[3] = mole_elements[3]+dN[2] + dN2[2]
         mole_elements[4] = mole_elements[4]+dN[3] + dN2[3]
         mole_elements[5] = mole_elements[5]+dN[4] + dN2[4]
+        if tracers is not None:
+            late = t[i] >= -tracer_split_ga*1e9
+            tracers['ast' if late else 'pre'] += np.asarray(dN[1:5], dtype=float)
+            tracers['com' if late else 'pre'] += np.asarray(dN2[1:5], dtype=float)
             
             
         Matm = Natm*MolW_atm
@@ -362,8 +415,9 @@ def run_model(runNo, obliquity_flag, sputtering_flag=True, pce_flag=True,\
         (euv_flux, f_co2_flux) = sputtering_co2.sputtering_co2_rate((t[i]-tinit)/1e9)
         Rdiffs_isotopes = MarsSputtering_Calc6_7.calculate_rdiffs(
             element_mass, isotope_mass, euv_flux)
+        sp_inv = np.concatenate((Natm[:2], mole_elements[2:]*atm_share))  # atmospheric moles
         F_i_sp1 = MarsSputtering_Calc6_7.F_i_sp(
-            f_co2_flux, np.concatenate((Natm[:2], mole_elements[2:])), Natm[0],
+            f_co2_flux, sp_inv, Natm[0],
             ['C','N','Ne','Ar','Kr','Xe'], euv=euv_flux)
         # Escape + continuous supply, integrated exactly over the step.
         # Per-particle escape rates k = F/N are taken at the start of the
@@ -376,13 +430,16 @@ def run_model(runNo, obliquity_flag, sputtering_flag=True, pce_flag=True,\
         # inventories and then reset them to the source composition.
         dt = tstep * 86400 * 365
         NA = 6.02e23
-        sp_inv = np.concatenate((Natm[:2], mole_elements[2:]))   # moles
         sputtering_on = (-t[i]/1e9 < dynamo_time) and sputtering_flag
         if sputtering_on:
             k_sp = f_sp * np.where(sp_inv > 0.,
                             np.maximum(F_i_sp1, 0.) / np.maximum(sp_inv*NA, 1e-300), 0.)
         else:
             k_sp = np.zeros(len(sp_inv))
+        # rates on the combined (atmosphere + regolith) noble-gas ledger
+        k_sp[2:] = k_sp[2:]*atm_share
+        xe_ion_on = xe_ion_k > 0. and -t[i]/1e9 >= xe_ion_end
+        k_xe_ion = xe_ion_k/(1e9*365.*86400.)*atm_share[3] if xe_ion_on else 0.
 
         # 5b photochemical escape rates (per particle)
         if pce_flag:
@@ -431,12 +488,23 @@ def run_model(runNo, obliquity_flag, sputtering_flag=True, pce_flag=True,\
         Natm[1] = N_new / 2.
         # Noble gases: sputtering, volcanic + IDP supply. Reference basis.
         for g in range(1, 5):
+            k_ch, f_ch = [k_sp[g+1]], [Rdiffs_isotopes[g]]
+            if g == 4 and k_xe_ion > 0.:
+                k_ch.append(k_xe_ion); f_ch.append(R_xe_ion)
             isotopes_sim[g], inv_new, _ = isotopic_data.evolve_open_system(
-                isotopes_sim[g], mole_elements[g+1], [k_sp[g+1]],
-                [Rdiffs_isotopes[g]],
+                isotopes_sim[g], mole_elements[g+1], k_ch, f_ch,
                 [(volc_noble[g-1], isotope_sources['Volcanic degassing'][g]),
                  (idp_noble[g-1], isotope_sources['IDPs'][g])], dt, True)
             mole_elements[g+1] = inv_new
+            if tracers is not None:
+                kdt = sum(k_ch)*dt
+                decay = np.exp(-kdt)
+                growth = -np.expm1(-kdt)/kdt if kdt > 1e-12 else 1. - 0.5*kdt
+                for key in tracers:
+                    tracers[key][g-1] *= decay
+                late = t[i] >= -tracer_split_ga*1e9
+                tracers['volc' if late else 'pre'][g-1] += volc_noble[g-1]*growth
+                tracers['idp' if late else 'pre'][g-1] += idp_noble[g-1]*growth
         Matm = Natm * MolW_atm
         if rate_log is not None:
             rate_log.append((t[i], n2, sp_N/2.*NA/dt, ph_N/2.*NA/dt,
@@ -556,6 +624,8 @@ def run_model(runNo, obliquity_flag, sputtering_flag=True, pce_flag=True,\
     				temp=ystore[:,6] )
     	print(output_file)
     	
+    mole_elements = np.array(mole_elements, dtype=float)
+    mole_elements[2:6] = mole_elements[2:6]*atm_share   # atmospheric amounts
     return t,ystore,mole_elements,isotopes_sim, Amars
     	
 

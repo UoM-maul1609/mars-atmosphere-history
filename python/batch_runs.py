@@ -18,7 +18,7 @@ from main import run_model
 # ------------------------------------------------------------------
 # CONFIG: edit here. Seeds are always 0, 1, ..., NUM_RUNS - 1.
 # ------------------------------------------------------------------
-NUM_RUNS = 10
+NUM_RUNS = 100
 NUM_CORES = 10
 OBLIQUITY = 2  # -1: fixed threshold, 1: 0°, 2: 45°, 3: 90°
 SPUTTERING = True
@@ -47,6 +47,11 @@ MODEL_KWARGS = dict(
     crater_model=2,   # Morbidelli et al. (2012) sawtooth; 1 = NI94 (Bradley)
     dynamo_time=4.1,  # sputtering starts when the dynamo stops (Ga)
 )
+# Optional (not Kurokawa): regolith Xe reservoir + early Xe ion escape that
+# matches 136Xe/130Xe and the Xe abundance (README, "xenon stage 2").
+# Uncomment to use: K = 10, 1.5 e-folds of combined Xe over 4.5-4.1 Ga.
+MODEL_KWARGS.update(K_reg=[0., 0., 0., 10.], xe_ion_k=1.5*11/0.4,
+                     xe_ion_mc=180.)
 
 
 def run_one(seed):

@@ -437,3 +437,111 @@ The time evolution matches as well:
 ### What this means for the noble gases
 
 Kurokawa's own best fit is about 3.5× below the observed Ne and about 10× below the observed Ar (Fig. 6c, mean of collapsed cases). The paper treats this as a match because its 1σ error bars span orders of magnitude. This code reproduces the published model within about 2× for every element, so the remaining Ne and Ar shortfalls relative to observations belong to the published parameterisation, not to this implementation.
+
+## October 2026: xenon feasibility study (stage 1)
+
+Kurokawa's model cannot fractionate Xe. Xe is depleted at the exobase by about 10⁷ relative to CO₂, so it is never sputtered, and the initial fractionated Xe is replaced by delivered Xe within 1–10 Myr (Kurokawa §3.1). The model ¹³⁶Xe/¹³⁰Xe is therefore a mixture of the delivered sources: comets 1.66, chondritic and volcanic 1.99. The observed Martian pattern is about 2.5%/amu heavier than chondritic across all non-radiogenic isotopes (124 to 136).
+
+The proposed physical mechanism is Xe ion escape carried by H⁺ or O⁺, after Zahnle et al. (2019) and Cassata et al. (2022). It probably needs a magnetic field to channel the flow, so it would operate only while the dynamo is active.
+
+### Diagnostic: noble-gas source tracers
+
+`run_model(..., tracers={}, tracer_split_ga=4.1)` tags ²⁰Ne, ³⁶Ar, ⁸⁴Kr and ¹³⁰Xe by origin:
+- `pre`: everything present at `tracer_split_ga`;
+- `ast`, `com`, `volc`, `idp`: each later source separately.
+
+The tracers sum exactly to the inventory (tested). Because noble gases are passive trace species, the effect of scaling any source can be evaluated from saved tracers without rerunning the model.
+
+### Can an early (dynamo-era) Xe escape survive to the present?
+
+**Method.** The test assumes an ideal escape that leaves ¹³⁶Xe/¹³⁰Xe = 2.294 when the dynamo stops, then follows the dilution by later sources. Best-fit settings, 200 seeds; values are collapsed-run means.
+
+| Dynamo / escape ends | Xe surviving from before | Late comet Xe | Late volcanic Xe | ¹³⁶Xe/¹³⁰Xe today |
+|---|---|---|---|---|
+| 4.1 Ga | 5% | 42% | 41% | 1.86 |
+| 3.7 Ga | 39% | 16% | 39% | 2.05 (best run 2.26) |
+
+A dynamo lasting to about 3.7 Ga is supported by:
+- Mittelholz et al. (2020): magnetised Lucus Planum units as young as 3.71 Ga;
+- Steele et al. (2024): strongly magnetised volcanic provinces as young as about 3.6–3.7 Ga;
+- Wenz & Stanley (2023): an active dynamo at 3.9–3.7 Ga;
+
+as reviewed in Addo-Smith (BSc dissertation). A later dynamo is the single change that lets an early Xe signature matter.
+
+### Scaling the late volcanic and cometary noble gases (escape window ending 3.7 Ga)
+
+| Late volcanic / comet noble gases | ¹³⁶Xe/¹³⁰Xe | Runs within 2σ of observed | Ar | Kr | Xe (model/obs) |
+|---|---|---|---|---|---|
+| ×1 (as now) | 2.05 | 3% | 0.15 | 1.15 | 0.68 |
+| ×0.1 | 2.21 | 30% | 0.02 | 0.77 | 0.37 |
+| ×0 | 2.27 | 97% | ~0 | 0.73 | 0.33 |
+
+### Conclusions
+
+1. **Dynamo at 4.1 Ga.** An early Xe escape cannot explain the present Xe, because about 95% of today's Xe in collapsed runs is delivered later.
+2. **Dynamo at about 3.7 Ga.** An early escape can explain the Xe isotopes and keep Kr near observed, but only if little Xe is added after 3.7 Ga.
+   - In this model, late Xe comes mostly from volcanic degassing. That source rests on Kurokawa's assumption of Earth depleted-mantle noble-gas ratios to C+N, scaled by `C_vol = 5`, and is unconstrained for Mars.
+   - The rest comes from comets.
+3. **The tension.** Collapsed-run Ar relies on exactly those late sources (comets about 40%, volcanic and IDP about 30% each). Suppressing late noble-gas delivery to save the Xe signature removes the Ar. Matching Xe and Ar together therefore requires late Ar delivery without much accompanying Xe, i.e. a different late noble-gas source composition from Kurokawa's comet and volcanic assumptions.
+4. **Abundance.** A real escape removes Xe (about two-thirds for this degree of fractionation). Xe abundance would then fall to about 0.1 of observed unless more Xe were present before 3.7 Ga.
+5. **Effect of the later dynamo on everything else.** Changing `dynamo_time` from 4.1 to 3.7 Ga alone barely changes the collapsed-run abundances (Ne 0.26, Ar 0.15, Kr 1.15, Xe 0.68) or the collapse fraction (33 against 35 of 200).
+
+## October 2026: xenon stage 2 — regolith reservoir plus early Xe ion escape
+
+Two optional mechanisms were added to `run_model`. Both are off by default, so the Kurokawa best fit in `batch_runs.py` is unchanged.
+
+### Regolith reservoir (`K_reg=[K_Ne, K_Ar, K_Kr, K_Xe]`)
+
+Each noble gas is shared between the atmosphere and a surface reservoir (gas adsorbed on regolith or trapped in ice) that stays in exchange equilibrium with it and holds `K` times the atmospheric amount.
+- The ledger tracks the combined inventory.
+- Impact erosion, sputtering and ion escape act only on the atmospheric share, 1/(1+K).
+- Adsorption is assumed not to fractionate isotopes, so gas returning from the reservoir carries the atmosphere's own (fractionated) composition. This is what distinguishes it from volcanic Xe, which is unfractionated.
+- The initial combined inventory equals Kurokawa's initial atmospheric inventory, so no Xe is added; the gas is only partitioned.
+- The returned `mole_elements` are atmospheric amounts, for comparison with observations. Tracers stay on the combined basis.
+
+### Xe ion escape (`xe_ion_k`, `xe_ion_mc`, `xe_ion_end`)
+
+Xe⁺ is dragged out by an escaping H⁺/O⁺ flow (Zahnle et al. 2019; Cassata et al. 2022) until `xe_ion_end` (default `dynamo_time`).
+- `xe_ion_k` is the per-atom escape rate of atmospheric ¹³⁰Xe, in Gyr⁻¹.
+- Isotopes escape in proportion to (m_c − m)/(m_c − 130), the drag-escape mass dependence, with crossover mass m_c = `xe_ion_mc` (default 180).
+- Kr is not affected: unlike Xe, it is not ionised by charge exchange with H⁺, which is why Martian Kr is unfractionated.
+- With escape switched on, the initial Xe is unfractionated (chondritic) rather than Kurokawa's present-day Mars composition (`xe_initial` overrides this).
+
+### Scan (Kurokawa best fit, baseline mode, collapsed-run means)
+
+Escape strength is given as e-folds of the combined Xe inventory over 4.5–4.1 Ga, so `xe_ion_k = e-folds × (1+K) / 0.4`. "Within 2σ" means |¹³⁶Xe/¹³⁰Xe − 2.294| < 0.048.
+
+The coarse scan used 40 seeds per case and gave 7 collapsed runs each:
+
+| Escape ends | K_Xe | e-folds | ¹³⁶Xe/¹³⁰Xe | Within 2σ | Xe (model/obs) |
+|---|---|---|---|---|---|
+| 4.1 Ga | 0 | 0 (Kurokawa's initial Mars Xe) | 1.83 | 0% | 0.87 |
+| 4.1 Ga | 0 | 2 | 1.81 | 0% | 0.80 |
+| 4.1 Ga | 10 | 0 (Kurokawa's initial Mars Xe) | 2.27 | 86% | 5.96 |
+| 4.1 Ga | 10 | 2 | 2.36 | 14% | 1.00 |
+| 4.1 Ga | 100 | 2 | 2.45 | 14% | 0.29 |
+| 3.7 Ga | 10 | 2 | 2.42 | 14% | 0.92 |
+
+The fine scan used 80 seeds per case and gave 14 collapsed runs each:
+
+| K_Xe | e-folds | ¹³⁶Xe/¹³⁰Xe | Within 2σ | Xe (model/obs) |
+|---|---|---|---|---|
+| 10 | 1.25 | 2.25 | 79% | 1.78 |
+| **10** | **1.5** | **2.29** | **71%** | **1.43** |
+| 10 | 1.75 | 2.34 | 14% | 1.15 |
+| **30** | **1.25** | **2.28** | **86%** | **1.35** |
+| 30 | 1.5 | 2.34 | 21% | 1.07 |
+
+Kr isotopes (⁸⁶Kr/⁸⁴Kr 0.302) and the Ne, Ar and Kr abundances are unaffected in every case.
+
+### Conclusions
+
+1. **A solution exists.** A regolith reservoir holding about 10–30 times the atmospheric Xe, combined with early ion escape that removes about 70–80% of the combined Xe before 4.1 Ga, reproduces both ¹³⁶Xe/¹³⁰Xe and the Xe abundance to within about 1.4×. No change is needed to the late volcanic or comet sources, so the Ar budget is untouched.
+2. **Without a reservoir (K = 0), early escape is erased.** Impact erosion and late supply replace the atmospheric Xe, whatever the escape strength.
+3. **A later dynamo is not required.** Ending the escape at 3.7 Ga instead of 4.1 Ga makes little difference once the reservoir is present. This is consistent with Cassata et al.'s meteorite evidence that Xe fractionation was complete within a few hundred Myr.
+4. **Degeneracies and caveats.**
+   - K, the escape strength and m_c trade off against each other; only their combination is constrained.
+   - K is held constant, although adsorption should increase when the atmosphere is cold and collapsed, and impact heating should release gas.
+   - Kr adsorption is set to zero here.
+   - The required escape gives atmospheric Xe a lifetime of about 25 Myr during 4.5–4.1 Ga (K = 10), which needs a strong H⁺ or O⁺ flux. Whether that is plausible should be checked against Zahnle et al. (2019).
+5. **Ar and Ne are still low.** That shortfall is separate from the Xe problem (Kurokawa's own best fit is also low), so it needs its own fix.

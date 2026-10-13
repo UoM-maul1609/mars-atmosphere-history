@@ -172,4 +172,30 @@ class PaperEquationTests(unittest.TestCase):
         pco2=y[:,8]*3.721/A/1e5          # cap applies to CO2, not total
         self.assertLessEqual(pco2[1:].max(), 2.75+1e-9)
 
+    def test_noble_gas_tracers_sum_to_inventory(self):
+        import main
+        tr={}
+        me=main.run_model(14,-1,tracers=tr)[2]
+        np.testing.assert_allclose(sum(tr.values()), me[2:6], rtol=1e-8)
+
+    def test_regolith_reservoir_and_xe_ion_escape(self):
+        import main
+        base=main.run_model(3,-1)
+        # zero K and no ion escape reproduce the default exactly
+        same=main.run_model(3,-1,K_reg=[0,0,0,0],xe_ion_k=0.)
+        np.testing.assert_allclose(same[2], base[2], rtol=1e-12)
+        # ion escape fractionates Xe only (from a chondritic start)
+        # (checked at 4.1 Ga: with K = 0 little early Xe survives to today)
+        esc=main.run_model(3,-1,xe_ion_k=5.)
+        ref=main.run_model(3,-1,xe_initial='Volcanic degassing')
+        j=np.argmin(abs(esc[0]+4.1e9))
+        self.assertGreater(esc[1][j,5], ref[1][j,5] + 0.05)
+        self.assertAlmostEqual(esc[1][-1,4], base[1][-1,4], places=10)
+        # a regolith reservoir shields early (pre-4.1 Ga) Xe from erosion
+        tr0,tr1={},{}
+        main.run_model(3,-1,tracers=tr0)
+        main.run_model(3,-1,tracers=tr1,K_reg=[0,0,0,30])
+        f=lambda tr: tr['pre'][3]/sum(v[3] for v in tr.values())
+        self.assertGreater(f(tr1), 2*f(tr0))
+
 if __name__ == '__main__': unittest.main()
